@@ -11,7 +11,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 public class Main {
@@ -32,12 +31,23 @@ public class Main {
         sender.enqueue(600, "0");
         sleep(Duration.ofSeconds(1));
         sender.enqueue(300, "1");
+        sleep(Duration.ofSeconds(1));
         sender.enqueue(200, "2");
         sleep(Duration.ofSeconds(20));
+
         sender.enqueue(2100, "0");
         sleep(Duration.ofSeconds(5));
+
         sender.enqueue(700, "1");
+        sender.enqueue(800, "2");
+        LOGGER.info("{} flush", OffsetDateTime.now());
+        sender.flush().toFuture();      // flush and subscribe
+        sleep(Duration.ofSeconds(5));
+
+        sender.enqueue(600, "0");
+        LOGGER.info("{} close", OffsetDateTime.now());
         sender.close();
+        sleep(Duration.ofSeconds(5));
     }
 
     private static void sleep(Duration d) throws InterruptedException {
@@ -105,7 +115,6 @@ public class Main {
         }
 
         private Flux<Batch> sendAll() {
-            AtomicReference<Batch> currentBatch = new AtomicReference<>();
             if (queue.size() == 0) {
                 return Flux.empty();
             }
@@ -126,7 +135,11 @@ public class Main {
                         }
                         return batch;
                     })
-                    .flatMap(this::send);
+                    .flatMap(this::send)    // do we need to send maintaining sequence?
+                    .doOnComplete(() -> {
+                        LOGGER.info("{} finish sendAll", OffsetDateTime.now());
+                        flushing = false;
+                    });
         }
 
         private Flux<Batch> startLoop() {
@@ -169,7 +182,7 @@ public class Main {
                     })
                     .delayElement(Duration.ofMillis(200))
                     .map(b -> {
-                        LOGGER.info("{} end send batch, size {}", OffsetDateTime.now());
+                        LOGGER.info("{} end send batch, size {}", OffsetDateTime.now(), b.count);
                         return b;
                     });
         }
