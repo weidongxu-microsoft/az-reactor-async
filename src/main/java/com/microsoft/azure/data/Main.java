@@ -31,13 +31,13 @@ public class Main {
 
         sender.enqueue(600, "0");
         sleep(Duration.ofSeconds(1));
-//        sender.enqueue(300, "1");
-//        sender.enqueue(200, "2");
+        sender.enqueue(300, "1");
+        sender.enqueue(200, "2");
         sleep(Duration.ofSeconds(20));
-//        sender.enqueue(3000, "0");
-//        sleep(Duration.ofSeconds(10));
-//        sender.enqueue(700, "1");
-//        sender.close();
+        sender.enqueue(2100, "0");
+        sleep(Duration.ofSeconds(5));
+        sender.enqueue(700, "1");
+        sender.close();
     }
 
     private static void sleep(Duration d) throws InterruptedException {
@@ -169,7 +169,7 @@ public class Main {
                     })
                     .delayElement(Duration.ofMillis(200))
                     .map(b -> {
-                        LOGGER.info("{} end send batch", OffsetDateTime.now());
+                        LOGGER.info("{} end send batch, size {}", OffsetDateTime.now());
                         return b;
                     });
         }
