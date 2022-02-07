@@ -37,21 +37,21 @@ public class Main {
         LOGGER.info("begin");
         beginMilli = TimeUnit.MILLISECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS);
 
-        sender.enqueue(600, "0").block();
+        sender.enqueue(600, "0").toFuture();
         sleep(Duration.ofSeconds(1));
-        sender.enqueue(300, "1").block();
+        sender.enqueue(300, "1").toFuture();
         sleep(Duration.ofSeconds(1));
-        sender.enqueue(200, "2").block();
+        sender.enqueue(200, "2").toFuture();
         sleep(Duration.ofSeconds(18));
         // wait for auto flush
 
-        sender.enqueue(2100, "0").block();
+        sender.enqueue(2100, "0").toFuture();
         // auto flush
 
         sleep(Duration.ofSeconds(3));
 
-        sender.enqueue(700, "1").block();
-        sender.enqueue(800, "2").block();
+        sender.enqueue(700, "1").toFuture();
+        sender.enqueue(800, "2").toFuture();
         LOGGER.info("{} flush", offsetFromBegin());
         sender.flush().toFuture();      // flush
         LOGGER.info("{} flush", offsetFromBegin());
@@ -62,8 +62,8 @@ public class Main {
 
         sleep(Duration.ofSeconds(3));
 
-        sender.enqueue(600, "0").block();
-        sender.enqueue(200, "2").block();
+        sender.enqueue(600, "0").toFuture();
+        sender.enqueue(200, "2").toFuture();
         LOGGER.info("{} close", offsetFromBegin());
         sender.close();
         sleep(Duration.ofSeconds(5));
@@ -107,7 +107,6 @@ public class Main {
         private final ConcurrentMap<Integer, CompletableFuture<Void>> poller = new ConcurrentHashMap<>(); // could not find an at-most-once in atomic
         private volatile boolean closed = false;
         private volatile boolean flushing = false;
-        private volatile Mono<Void> cachedFlushing;
 
         public Channel(String partitionId) {
             this.partitionId = partitionId;
@@ -118,34 +117,32 @@ public class Main {
                 return Mono.empty();
             }
 
-            int previousCount = this.queue.size();
-            this.queue.addAll(Collections.nCopies(count, OffsetDateTime.now()));
-            if (previousCount == 0 && !poller.containsKey(0)) {
-                // start loop
-                poller.computeIfAbsent(0, ignored -> startLoop().then().toFuture());
-            }
-            return Mono.empty();    // seems no need to wait?
+            return Mono.defer(() -> {
+                int previousCount = this.queue.size();
+                this.queue.addAll(Collections.nCopies(count, OffsetDateTime.now()));
+                if (previousCount == 0 && !poller.containsKey(0)) {
+                    // start loop
+                    poller.computeIfAbsent(0, ignored -> startLoop().then().toFuture());
+                }
+                return Mono.empty();
+            });
         }
 
         public Mono<Void> flush() {
-            if (queue.size() == 0) {
-                return Mono.empty();
-            }
-
-            if (!flushing) {
-                flushing = true;
-                cachedFlushing = flushAll().then().cache();
-            }
-            return cachedFlushing;
+            return sendAll().then();
         }
 
-        private Flux<Batch> flushAll() {
-            if (queue.size() == 0) {
-                return Flux.empty();
-            }
+        private Flux<Batch> sendAll() {
             return Flux.defer(() -> {
-                        flushing = true;
-                        return createBatch().repeat(() -> queue.size() > 0);
+                        if (queue.size() == 0) {
+                            return Flux.empty();
+                        } else if (flushing) {
+                            LOGGER.info("{} P{} skip sendAll", offsetFromBegin(), partitionId);
+                            return Flux.empty();
+                        } else {
+                            flushing = true;
+                            return createBatch().repeat(() -> queue.size() > 0);
+                        }
                     })
                     .map(batch -> {
                         while (true) {
@@ -180,9 +177,9 @@ public class Main {
 
                         OffsetDateTime data = queue.peek();
                         if (data != null && data.plus(maxWaitTime).isBefore(OffsetDateTime.now())) {
-                            return flushAll();
+                            return sendAll();
                         } else if (queue.size() > maxPendingSize) {
-                            return flushAll();
+                            return sendAll();
                         } else {
                             return Flux.empty();
                         }
